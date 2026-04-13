@@ -40,7 +40,7 @@
   .logo { font-size: 2.6rem; line-height: 1; }
   .header-text h1 { font-family: 'Playfair Display', serif; font-size: 1.65rem; font-weight: 700; }
   .header-text p { font-size: .82rem; color: var(--accent); letter-spacing: .06em; text-transform: uppercase; margin-top: 3px; }
-  main { max-width: 1100px; margin: 0 auto; padding: 36px 24px 60px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 36px 24px 60px; }
   .card {
     background: var(--paper2);
     border: 1px solid var(--rule);
@@ -62,11 +62,50 @@
   .stat-box { background: var(--paper); border: 1px solid var(--rule); border-radius: 3px; padding: 14px 10px; text-align: center; }
   .stat-num { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 700; line-height: 1; }
   .stat-label { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; margin-top: 5px; color: var(--accent); }
+
   /* Chart legend */
   .legend { display: flex; gap: 20px; margin-bottom: 14px; flex-wrap: wrap; }
   .pill { display: flex; align-items: center; gap: 7px; font-size: .84rem; }
   .pill-dot { width: 11px; height: 11px; border-radius: 50%; }
-  .chart-wrap { position: relative; width: 100%; height: 360px; }
+
+  /* Charts layout: main left, two small right */
+  .charts-row {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 18px;
+    align-items: start;
+  }
+  .chart-main-wrap {
+    position: relative;
+    width: 100%;
+    height: 360px;
+  }
+  .charts-side {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .side-chart-block {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 14px 16px;
+  }
+  .side-chart-title {
+    font-family: 'Playfair Display', serif;
+    font-size: .88rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 10px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .chart-side-wrap {
+    position: relative;
+    width: 100%;
+    height: 156px;
+  }
+
   /* Monthly grid */
   .month-grid {
     display: grid;
@@ -99,6 +138,13 @@
   .month-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .month-val { font-weight: 700; font-family: 'Playfair Display', serif; font-size: .95rem; }
   .month-days { font-size: .7rem; color: var(--accent); margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--rule); }
+
+  @media (max-width: 820px) {
+    .charts-row { grid-template-columns: 1fr; }
+    .chart-main-wrap { height: 280px; }
+    .charts-side { flex-direction: row; }
+    .side-chart-block { flex: 1; }
+  }
 </style>
 </head>
 <body>
@@ -134,8 +180,27 @@
       <span class="pill"><span class="pill-dot" style="background:var(--tractor)"></span>Traktory</span>
       <span class="pill"><span class="pill-dot" style="background:var(--combine)"></span>Kombajny</span>
     </div>
-    <div class="chart-wrap">
-      <canvas id="myChart"></canvas>
+    <div class="charts-row">
+      <!-- Main line chart -->
+      <div class="chart-main-wrap">
+        <canvas id="myChart"></canvas>
+      </div>
+
+      <!-- Two side charts stacked -->
+      <div class="charts-side">
+        <div class="side-chart-block">
+          <div class="side-chart-title">📅 Według miesiąca</div>
+          <div class="chart-side-wrap">
+            <canvas id="monthChart"></canvas>
+          </div>
+        </div>
+        <div class="side-chart-block">
+          <div class="side-chart-title">📆 Według dnia tygodnia</div>
+          <div class="chart-side-wrap">
+            <canvas id="dowChart"></canvas>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -157,20 +222,32 @@ const DATA = [
 ];
 // ═══════════════════════════════════════════════════════════
 
-const MONTHS = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec",
-                "Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"];
+const MONTHS_PL = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec",
+                   "Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"];
+const MONTHS_SHORT = ["Sty","Lut","Mar","Kwi","Maj","Cze",
+                      "Lip","Sie","Wrz","Paź","Lis","Gru"];
 
-// Liczenie sum globalnych
+// getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+const DOW_LABELS = ["Pon","Wto","Śro","Czw","Pią","Sob","Nie"];
+const DOW_MAP    = [6, 0, 1, 2, 3, 4, 5]; // maps getDay() → DOW index (Mon=0)
+
+// ─── Totals ───
 let ts = 0, tt = 0, tc = 0;
 DATA.forEach(e => { ts += e.storks; tt += e.tractors; tc += e.combines; });
 document.getElementById('totalStorks').textContent   = ts;
 document.getElementById('totalTractors').textContent = tt;
 document.getElementById('totalCombines').textContent = tc;
 
-// Grupowanie po miesiącach (klucz: "MM.RRRR")
+// Helper: parse DD.MM.YYYY → Date
+function parseDate(str) {
+  const [d, m, y] = str.split('.').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// ─── Group by month (key: "MM.YYYY") ───
 const byMonth = {};
 DATA.forEach(e => {
-  const key = e.date.slice(3); // "MM.RRRR"
+  const key = e.date.slice(3); // "MM.YYYY"
   if (!byMonth[key]) byMonth[key] = { storks: 0, tractors: 0, combines: 0, days: 0 };
   byMonth[key].storks   += e.storks;
   byMonth[key].tractors += e.tractors;
@@ -178,38 +255,43 @@ DATA.forEach(e => {
   byMonth[key].days++;
 });
 
-// Renderowanie kart miesięcznych
-const grid = document.getElementById('monthlyGrid');
-Object.entries(byMonth)
-  .sort(([a], [b]) => {
-    // sort by RRRR then MM
-    const [am, ay] = a.split('.');
-    const [bm, by] = b.split('.');
-    return ay !== by ? ay - by : am - bm;
-  })
-  .forEach(([key, v]) => {
-    const [mm, yyyy] = key.split('.');
-    const monthName = MONTHS[parseInt(mm, 10) - 1];
-    grid.innerHTML += `
-      <div class="month-card">
-        <div class="month-name">${monthName} ${yyyy}</div>
-        <div class="month-row">
-          <span class="month-row-label"><span class="month-dot" style="background:var(--stork)"></span>Bociany</span>
-          <span class="month-val" style="color:var(--stork)">${v.storks}</span>
-        </div>
-        <div class="month-row">
-          <span class="month-row-label"><span class="month-dot" style="background:var(--tractor)"></span>Traktory</span>
-          <span class="month-val" style="color:var(--tractor)">${v.tractors}</span>
-        </div>
-        <div class="month-row">
-          <span class="month-row-label"><span class="month-dot" style="background:var(--combine)"></span>Kombajny</span>
-          <span class="month-val" style="color:var(--combine)">${v.combines}</span>
-        </div>
-        <div class="month-days">${v.days} ${v.days === 1 ? 'dzień z danymi' : 'dni z danymi'}</div>
-      </div>`;
-  });
+const sortedMonths = Object.entries(byMonth).sort(([a], [b]) => {
+  const [am, ay] = a.split('.').map(Number);
+  const [bm, by] = b.split('.').map(Number);
+  return ay !== by ? ay - by : am - bm;
+});
 
-// Wykres
+// ─── Group by day of week ───
+const byDow = Array.from({ length: 7 }, () => ({ storks: 0, tractors: 0, combines: 0 }));
+DATA.forEach(e => {
+  const dow = DOW_MAP[parseDate(e.date).getDay()];
+  byDow[dow].storks   += e.storks;
+  byDow[dow].tractors += e.tractors;
+  byDow[dow].combines += e.combines;
+});
+
+// ─── Shared chart options helpers ───
+const sideScaleOpts = {
+  x: {
+    grid: { color: 'rgba(214,201,168,.35)' },
+    ticks: { color: '#7a6a4a', font: { family: 'Lato', size: 10 }, maxRotation: 0 }
+  },
+  y: {
+    beginAtZero: true,
+    grid: { color: 'rgba(214,201,168,.5)' },
+    ticks: { color: '#7a6a4a', font: { family: 'Lato', size: 10 }, precision: 0, maxTicksLimit: 5 }
+  }
+};
+const tooltipOpts = {
+  backgroundColor: '#2c2416',
+  titleColor: '#f5efe2',
+  bodyColor: '#ddd0b0',
+  padding: 10,
+  cornerRadius: 3,
+  callbacks: { label: ctx => `  ${ctx.dataset.label}: ${ctx.parsed.y}` }
+};
+
+// ─── 1. Main line chart ───
 new Chart(document.getElementById('myChart'), {
   type: 'line',
   data: {
@@ -218,29 +300,23 @@ new Chart(document.getElementById('myChart'), {
       {
         label: 'Bociany',
         data: DATA.map(e => e.storks),
-        borderColor: '#4a7c8e',
-        backgroundColor: 'rgba(74,124,142,.12)',
+        borderColor: '#4a7c8e', backgroundColor: 'rgba(74,124,142,.12)',
         tension: .35, fill: true,
-        pointRadius: DATA.length > 90 ? 2 : 5,
-        pointHoverRadius: 7, borderWidth: 2,
+        pointRadius: DATA.length > 90 ? 2 : 5, pointHoverRadius: 7, borderWidth: 2,
       },
       {
         label: 'Traktory',
         data: DATA.map(e => e.tractors),
-        borderColor: '#c0622b',
-        backgroundColor: 'rgba(192,98,43,.10)',
+        borderColor: '#c0622b', backgroundColor: 'rgba(192,98,43,.10)',
         tension: .35, fill: true,
-        pointRadius: DATA.length > 90 ? 2 : 5,
-        pointHoverRadius: 7, borderWidth: 2,
+        pointRadius: DATA.length > 90 ? 2 : 5, pointHoverRadius: 7, borderWidth: 2,
       },
       {
         label: 'Kombajny',
         data: DATA.map(e => e.combines),
-        borderColor: '#7a9e3f',
-        backgroundColor: 'rgba(122,158,63,.10)',
+        borderColor: '#7a9e3f', backgroundColor: 'rgba(122,158,63,.10)',
         tension: .35, fill: true,
-        pointRadius: DATA.length > 90 ? 2 : 5,
-        pointHoverRadius: 7, borderWidth: 2,
+        pointRadius: DATA.length > 90 ? 2 : 5, pointHoverRadius: 7, borderWidth: 2,
       },
     ]
   },
@@ -250,16 +326,7 @@ new Chart(document.getElementById('myChart'), {
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
-      tooltip: {
-        backgroundColor: '#2c2416',
-        titleColor: '#f5efe2',
-        bodyColor: '#ddd0b0',
-        padding: 12,
-        cornerRadius: 3,
-        callbacks: {
-          label: ctx => `  ${ctx.dataset.label}: ${ctx.parsed.y}`
-        }
-      }
+      tooltip: { ...tooltipOpts, padding: 12 }
     },
     scales: {
       x: {
@@ -273,6 +340,121 @@ new Chart(document.getElementById('myChart'), {
       }
     }
   }
+});
+
+// ─── 2. Monthly bar chart ───
+new Chart(document.getElementById('monthChart'), {
+  type: 'bar',
+  data: {
+    labels: sortedMonths.map(([key]) => {
+      const [mm, yyyy] = key.split('.');
+      return MONTHS_SHORT[parseInt(mm, 10) - 1] + ' ' + yyyy;
+    }),
+    datasets: [
+      {
+        label: 'Bociany',
+        data: sortedMonths.map(([, v]) => v.storks),
+        backgroundColor: 'rgba(74,124,142,.75)',
+        borderColor: '#4a7c8e',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+      {
+        label: 'Traktory',
+        data: sortedMonths.map(([, v]) => v.tractors),
+        backgroundColor: 'rgba(192,98,43,.75)',
+        borderColor: '#c0622b',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+      {
+        label: 'Kombajny',
+        data: sortedMonths.map(([, v]) => v.combines),
+        backgroundColor: 'rgba(122,158,63,.75)',
+        borderColor: '#7a9e3f',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: tooltipOpts,
+    },
+    scales: sideScaleOpts,
+  }
+});
+
+// ─── 3. Day-of-week bar chart ───
+new Chart(document.getElementById('dowChart'), {
+  type: 'bar',
+  data: {
+    labels: DOW_LABELS,
+    datasets: [
+      {
+        label: 'Bociany',
+        data: byDow.map(d => d.storks),
+        backgroundColor: 'rgba(74,124,142,.75)',
+        borderColor: '#4a7c8e',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+      {
+        label: 'Traktory',
+        data: byDow.map(d => d.tractors),
+        backgroundColor: 'rgba(192,98,43,.75)',
+        borderColor: '#c0622b',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+      {
+        label: 'Kombajny',
+        data: byDow.map(d => d.combines),
+        backgroundColor: 'rgba(122,158,63,.75)',
+        borderColor: '#7a9e3f',
+        borderWidth: 1,
+        borderRadius: 2,
+      },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: tooltipOpts,
+    },
+    scales: sideScaleOpts,
+  }
+});
+
+// ─── Monthly summary cards ───
+const grid = document.getElementById('monthlyGrid');
+sortedMonths.forEach(([key, v]) => {
+  const [mm, yyyy] = key.split('.');
+  const monthName = MONTHS_PL[parseInt(mm, 10) - 1];
+  grid.innerHTML += `
+    <div class="month-card">
+      <div class="month-name">${monthName} ${yyyy}</div>
+      <div class="month-row">
+        <span class="month-row-label"><span class="month-dot" style="background:var(--stork)"></span>Bociany</span>
+        <span class="month-val" style="color:var(--stork)">${v.storks}</span>
+      </div>
+      <div class="month-row">
+        <span class="month-row-label"><span class="month-dot" style="background:var(--tractor)"></span>Traktory</span>
+        <span class="month-val" style="color:var(--tractor)">${v.tractors}</span>
+      </div>
+      <div class="month-row">
+        <span class="month-row-label"><span class="month-dot" style="background:var(--combine)"></span>Kombajny</span>
+        <span class="month-val" style="color:var(--combine)">${v.combines}</span>
+      </div>
+      <div class="month-days">${v.days} ${v.days === 1 ? 'dzień z danymi' : 'dni z danymi'}</div>
+    </div>`;
 });
 </script>
 </body>
